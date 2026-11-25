@@ -1,6 +1,8 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 # ENA Webin-CLI Bulk Submission Tool
+**This fork contains updates to the `bulk_webincli.py` script to improve functionality with webin-cli v11.0.0**
+
 ### Introduction
 This tool is a wrapper to bulk submit read, un-annotated genome, targeted sequence or taxonomic reference data to the ENA using Webin-CLI.
 
