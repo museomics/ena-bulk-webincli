@@ -282,7 +282,9 @@ class SubmissionWebinCLI:
         self.log_path_out = Path(self.output_dir) / f"{self.manifest_prefix}.out"
         print(self.log_path_err, self.log_path_out)
 
-        self.all_error_runs = Path(self.args.directory) / "failed_validation.txt"
+        # Separate failure files for validate and submit runs
+        failures_name = "failed_submission.txt" if self.args.mode == "submit" else "failed_validation.txt"
+        self.all_error_runs = Path(self.args.directory) / failures_name
 
     def construct_command(self):
         """
@@ -328,11 +330,21 @@ class SubmissionWebinCLI:
         :return: Standard output and error from the run command
         """
         print("*" * 100)
-        print("""Command to be executed:{}""".format(command))
+        print("""Command to be executed:{}""".format(command.replace(self.args.password, "********")))
         print("*" * 100)
         p = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
         out, err = p.communicate()
         return out, err
+
+    # Success messages printed by Webin-CLI (WebinCliMessage.java, Webin-CLI 11):
+    #   validate: "Submission(s) validated successfully."
+    #   submit:   "The submission has been completed successfully. The following
+    #              {type} accession was assigned to the submission: {accession}"
+    # A submit that reports "No accession was assigned" is treated as failed.
+    SUCCESS_MESSAGES = {
+        "validate": "Submission(s) validated successfully.",
+        "submit": "The submission has been completed successfully. The following",
+    }
 
     def post_process(self, output, error, timestamp):
         """
@@ -341,27 +353,28 @@ class SubmissionWebinCLI:
         :param error: The standard error from the run command (.stderr)
         :param timestamp: The timestamp of the run command
         """
-        with open(self.log_path_err, "w") as err_file, open(self.log_path_out, "w") as out_file, open(self.all_error_runs, "a") as all_errors:
-            if error:
-                err_file.write(str(error.decode("UTF-8")))
-                err_file.write("[{}] VALIDATION FAILED - {}\n".format(timestamp, self.file))
-                all_errors.write("*" * 100 + "\n")
-                all_errors.write("[{}] {}\n".format(timestamp, self.manifest_prefix))
-                all_errors.write(str(error.decode("UTF-8")) + "\n")
-                all_errors.write("*" * 100 + "\n")
+        out_text = output.decode("UTF-8") if output else ""
+        err_text = error.decode("UTF-8") if error else ""
+        label = "SUBMISSION" if self.args.mode == "submit" else "VALIDATION"
+        has_error = any(line.startswith("ERROR:") for line in out_text.splitlines())
+        passed = (self.SUCCESS_MESSAGES[self.args.mode] in out_text) and not has_error and not err_text
 
-            if output:
-                if "The submission has been validated successfully." in str(output):
-                    out_file.write("*" * 100 + "\n")
-                    out_file.write(str(output.decode("UTF-8")))
-                    out_file.write("[{}] VALIDATION SUCCESSFUL - {}\n".format(timestamp, self.file))
-                    out_file.write("*" * 100)
-                else:
-                    err_file.write(str(output.decode("UTF-8")))
-                    err_file.write("[{}] VALIDATION FAILED - {}\n".format(timestamp, self.file))
+        with open(self.log_path_err, "w") as err_file, open(self.log_path_out, "w") as out_file:
+            if passed:
+                out_file.write("*" * 100 + "\n")
+                out_file.write(out_text)
+                out_file.write("[{}] {} SUCCESSFUL - {}\n".format(timestamp, label, self.file))
+                out_file.write("*" * 100)
+            else:
+                details = err_text + out_text
+                if not details:
+                    details = "No output from Webin-CLI\n"
+                err_file.write(details)
+                err_file.write("[{}] {} FAILED - {}\n".format(timestamp, label, self.file))
+                with open(self.all_error_runs, "a") as all_errors:
                     all_errors.write("*" * 100 + "\n")
-                    all_errors.write("[{}] {}\n".format(timestamp, self.manifest_prefix))
-                    all_errors.write(str(output.decode("UTF-8")))
+                    all_errors.write("[{}] {} FAILED - {}\n".format(timestamp, label, self.manifest_prefix))
+                    all_errors.write(details)
                     all_errors.write("*" * 100 + "\n")
 
 
